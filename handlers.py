@@ -29,6 +29,11 @@ class AddTdataSession(StatesGroup):
     contacts_count = State()
     waiting_file = State()
 
+class AddTextSession(StatesGroup):
+    product_id = State()
+    contacts_count = State()
+    text_data = State()
+
 # ------------------ Helper ------------------
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -87,7 +92,7 @@ async def buy_product(callback: types.CallbackQuery, bot: Bot):
         text = f"<b>{product.name}</b>\n\n{product.description}\n\n"
         text += f"Контактов: от {min_contacts} до {max_contacts}\n"
         text += f"Цена: {product.price} {product.currency}\n\n"
-        text += "После оплаты вы получите ZIP-архив с папкой tdata и инструкцию."
+        text += "После оплаты вы получите доступ к аккаунту."
         await callback.message.edit_text(text, reply_markup=kb.product_detail_keyboard(product_id), parse_mode="HTML")
     await callback.answer()
 
@@ -105,7 +110,6 @@ async def create_invoice(callback: types.CallbackQuery, bot: Bot):
         if not product:
             await callback.message.edit_text("Товар не найден.")
             return
-        # Проверяем ещё раз наличие свободных сессий
         free_session = db.query(models.Session).filter(
             models.Session.product_id == product_id,
             models.Session.is_sold == False
@@ -169,7 +173,7 @@ async def check_payment(callback: types.CallbackQuery, bot: Bot):
             db.add(purchase)
             db.commit()
 
-            # Отправка файла
+            # Отправка в зависимости от типа сессии
             if session.is_file and session.file_data:
                 await bot.send_document(
                     callback.message.chat.id,
@@ -190,7 +194,14 @@ async def check_payment(callback: types.CallbackQuery, bot: Bot):
                 await bot.send_message(callback.message.chat.id, instruction, parse_mode="Markdown")
                 await callback.message.delete()
             else:
-                await callback.message.edit_text("Ошибка: сессия не является файлом.")
+                await callback.message.edit_text(
+                    f"✅ Оплата получена!\n\n"
+                    f"Ваш {invoice.product.name}:\n"
+                    f"<code>{session.data}</code>\n"
+                    f"Контактов: {session.contacts_count}\n\n"
+                    f"Сохраните эти данные.",
+                    parse_mode="HTML"
+                )
         else:
             await callback.answer("Платёж ещё не получен. Попробуйте позже.", show_alert=True)
 
@@ -211,6 +222,8 @@ async def my_purchases(callback: types.CallbackQuery, bot: Bot):
             text += f"🔹 {p.product.name} — {p.purchased_at.strftime('%d.%m.%Y %H:%M')}\n"
             if p.session.is_file:
                 text += f"   📎 Файл: {p.session.filename}\n"
+            else:
+                text += f"   📝 Данные: {p.session.data}\n"
             text += "\n"
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.main_menu_keyboard())
     await callback.answer()
@@ -445,3 +458,67 @@ async def add_tdata_file(message: types.Message, state: FSMContext, bot: Bot):
 @dp.message(AddTdataSession.waiting_file)
 async def add_tdata_invalid(message: types.Message, state: FSMContext):
     await message.answer("Пожалуйста, отправьте ZIP-файл.")
+
+# ------------------ Добавление текстовой сессии (логин:пароль) ------------------
+@dp.callback_query(lambda c: c.data == "admin_add_text")
+async def admin_add_text_start(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет прав", show_alert=True)
+        return
+    with models.SessionLocal() as db:
+        products = db.query(models.Product).all()
+        if not products:
+            await callback.message.edit_text("Сначала добавьте товар.", reply_markup=kb.admin_menu_keyboard())
+            return
+        text = "Выберите товар, к которому добавить текстовую сессию:\n\n"
+        for p in products:
+            text += f"ID {p.id}: {p.name}\n"
+        await callback.message.edit_text(text)
+        await callback.message.answer("Введите ID товара:")
+        await state.set_state(AddTextSession.product_id)
+    await callback.answer()
+
+@dp.message(AddTextSession.product_id)
+async def add_text_product(message: types.Message, state: FSMContext, bot: Bot):
+    try:
+        product_id = int(message.text)
+        with models.SessionLocal() as db:
+            product = db.query(models.Product).filter_by(id=product_id).first()
+            if not product:
+                await message.answer("Товар не найден.")
+                return
+            await state.update_data(product_id=product_id)
+            await message.answer("Введите количество контактов (число):")
+            await state.set_state(AddTextSession.contacts_count)
+    except ValueError:
+        await message.answer("Введите число.")
+
+@dp.message(AddTextSession.contacts_count)
+async def add_text_contacts(message: types.Message, state: FSMContext, bot: Bot):
+    try:
+        contacts_count = int(message.text)
+        await state.update_data(contacts_count=contacts_count)
+        await message.answer("Введите текстовые данные (логин:пароль):")
+        await state.set_state(AddTextSession.text_data)
+    except ValueError:
+        await message.answer("Введите число.")
+
+@dp.message(AddTextSession.text_data)
+async def add_text_data(message: types.Message, state: FSMContext, bot: Bot):
+    text_data = message.text
+    data = await state.get_data()
+    product_id = data['product_id']
+    contacts_count = data['contacts_count']
+    with models.SessionLocal() as db:
+        session = models.Session(
+            product_id=product_id,
+            data=text_data,
+            is_file=False,
+            contacts_count=contacts_count,
+            is_sold=False
+        )
+        db.add(session)
+        db.commit()
+        await log_action(bot, message.from_user.id, "admin_add_text", f"Добавлена текстовая сессия к товару ID {product_id}")
+        await message.answer(f"Текстовая сессия добавлена (контактов: {contacts_count}).", reply_markup=kb.admin_menu_keyboard())
+    await state.clear()
