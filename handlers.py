@@ -21,7 +21,7 @@ class AddProduct(StatesGroup):
     price = State()
     currency = State()
 
-class ToggleProductActive(StatesGroup):
+class DeleteProduct(StatesGroup):
     product_id = State()
 
 class AddTdataSession(StatesGroup):
@@ -33,6 +33,9 @@ class AddTextSession(StatesGroup):
     product_id = State()
     contacts_count = State()
     text_data = State()
+
+class ToggleProductActive(StatesGroup):
+    product_id = State()
 
 # ------------------ Helper ------------------
 def is_admin(user_id: int) -> bool:
@@ -76,9 +79,9 @@ async def buy_product(callback: types.CallbackQuery, bot: Bot):
     product_id = int(callback.data.split("_")[1])
     await log_action(bot, callback.from_user.id, "buy_product", f"Товар ID {product_id}")
     with models.SessionLocal() as db:
-        product = db.query(models.Product).filter_by(id=product_id).first()
+        product = db.query(models.Product).filter_by(id=product_id, is_active=True).first()
         if not product:
-            await callback.message.edit_text("Товар не найден.")
+            await callback.message.edit_text("Товар не найден или скрыт.")
             return
         free_sessions = db.query(models.Session).filter(
             models.Session.product_id == product_id,
@@ -106,9 +109,9 @@ async def create_invoice(callback: types.CallbackQuery, bot: Bot):
             user = models.User(tg_id=callback.from_user.id, username=callback.from_user.username, full_name=callback.from_user.full_name)
             db.add(user)
             db.commit()
-        product = db.query(models.Product).filter_by(id=product_id).first()
+        product = db.query(models.Product).filter_by(id=product_id, is_active=True).first()
         if not product:
-            await callback.message.edit_text("Товар не найден.")
+            await callback.message.edit_text("Товар не найден или скрыт.")
             return
         free_session = db.query(models.Session).filter(
             models.Session.product_id == product_id,
@@ -254,6 +257,7 @@ async def admin_stats(callback: types.CallbackQuery, bot: Bot):
     with models.SessionLocal() as db:
         total_users = db.query(models.User).count()
         total_products = db.query(models.Product).count()
+        active_products = db.query(models.Product).filter_by(is_active=True).count()
         total_sessions = db.query(models.Session).count()
         sold_sessions = db.query(models.Session).filter_by(is_sold=True).count()
         total_purchases = db.query(models.Purchase).count()
@@ -262,7 +266,8 @@ async def admin_stats(callback: types.CallbackQuery, bot: Bot):
         text = (
             f"📊 <b>Статистика</b>\n\n"
             f"👥 Пользователей: {total_users}\n"
-            f"📦 Товаров: {total_products}\n"
+            f"📦 Товаров (всего): {total_products}\n"
+            f"🟢 Активных товаров: {active_products}\n"
             f"🔑 Всего сессий: {total_sessions}\n"
             f"✅ Продано: {sold_sessions}\n"
             f"🛒 Покупок всего: {total_purchases}\n"
@@ -334,7 +339,8 @@ async def add_product_currency(message: types.Message, state: FSMContext, bot: B
             name=data['name'],
             description=data['description'],
             price=data['price'],
-            currency=currency
+            currency=currency,
+            is_active=True
         )
         db.add(product)
         db.commit()
@@ -342,7 +348,7 @@ async def add_product_currency(message: types.Message, state: FSMContext, bot: B
         await message.answer(f"Товар «{product.name}» успешно добавлен.", reply_markup=kb.admin_menu_keyboard())
     await state.clear()
 
-# ------------------ Скрыть/показать товар (вместо удаления) ------------------
+# ------------------ Скрытие/показать товар ------------------
 @dp.callback_query(lambda c: c.data == "admin_toggle_product")
 async def admin_toggle_product_start(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
     if not is_admin(callback.from_user.id):
@@ -379,6 +385,17 @@ async def toggle_product_active(message: types.Message, state: FSMContext, bot: 
     except ValueError:
         await message.answer("Введите число.")
     await state.clear()
+
+# ------------------ Удаление товара (заменено скрытием, оставим для обратной совместимости, но не используем) ------------------
+# Оставим обработчик удаления, но он будет просто скрывать товар, а не удалять.
+# Можно удалить кнопку удаления из клавиатуры, чтобы не путать.
+@dp.callback_query(lambda c: c.data == "admin_del_product")
+async def admin_del_product_start(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет прав", show_alert=True)
+        return
+    await callback.message.edit_text("Используйте кнопку «Скрыть/показать товар» для управления видимостью. Удаление товара отключено.")
+    await callback.answer()
 
 # ------------------ Добавление tdata (ZIP) ------------------
 @dp.callback_query(lambda c: c.data == "admin_add_tdata")
