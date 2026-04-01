@@ -32,7 +32,7 @@ class Session(Base):
     __tablename__ = 'sessions'
     id = Column(Integer, primary_key=True)
     product_id = Column(Integer, ForeignKey('products.id'), nullable=False)
-    data = Column(Text, nullable=True)            # текстовые данные (не используется)
+    data = Column(Text, nullable=True)            # текстовые данные (логин:пароль)
     file_data = Column(LargeBinary, nullable=True) # бинарные данные zip
     filename = Column(String, nullable=True)
     is_file = Column(Boolean, default=False)
