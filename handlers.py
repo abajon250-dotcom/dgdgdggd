@@ -21,7 +21,7 @@ class AddProduct(StatesGroup):
     price = State()
     currency = State()
 
-class DeleteProduct(StatesGroup):
+class ToggleProductActive(StatesGroup):
     product_id = State()
 
 class AddTdataSession(StatesGroup):
@@ -64,7 +64,7 @@ async def main_menu_callback(callback: types.CallbackQuery, bot: Bot):
 async def show_catalog(callback: types.CallbackQuery, bot: Bot):
     await log_action(bot, callback.from_user.id, "catalog", "Открыл каталог")
     with models.SessionLocal() as db:
-        products = db.query(models.Product).all()
+        products = db.query(models.Product).filter_by(is_active=True).all()
         if not products:
             await callback.message.edit_text("Товаров пока нет.")
             return
@@ -342,44 +342,40 @@ async def add_product_currency(message: types.Message, state: FSMContext, bot: B
         await message.answer(f"Товар «{product.name}» успешно добавлен.", reply_markup=kb.admin_menu_keyboard())
     await state.clear()
 
-# ------------------ Удаление товара ------------------
-@dp.callback_query(lambda c: c.data == "admin_del_product")
-async def admin_del_product_start(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+# ------------------ Скрыть/показать товар (вместо удаления) ------------------
+@dp.callback_query(lambda c: c.data == "admin_toggle_product")
+async def admin_toggle_product_start(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
     if not is_admin(callback.from_user.id):
         await callback.answer("Нет прав", show_alert=True)
         return
     with models.SessionLocal() as db:
         products = db.query(models.Product).all()
         if not products:
-            await callback.message.edit_text("Нет товаров для удаления.", reply_markup=kb.admin_menu_keyboard())
+            await callback.message.edit_text("Нет товаров.", reply_markup=kb.admin_menu_keyboard())
             return
-        text = "Выберите товар для удаления:\n\n"
+        text = "Выберите товар для скрытия/показа:\n\n"
         for p in products:
-            text += f"ID {p.id}: {p.name}\n"
+            status = "🟢 активен" if p.is_active else "🔴 скрыт"
+            text += f"ID {p.id}: {p.name} — {status}\n"
         await callback.message.edit_text(text)
-        await callback.message.answer("Введите ID товара, который хотите удалить:")
-        await state.set_state(DeleteProduct.product_id)
+        await callback.message.answer("Введите ID товара:")
+        await state.set_state(ToggleProductActive.product_id)
     await callback.answer()
 
-@dp.message(DeleteProduct.product_id)
-async def delete_product(message: types.Message, state: FSMContext, bot: Bot):
+@dp.message(ToggleProductActive.product_id)
+async def toggle_product_active(message: types.Message, state: FSMContext, bot: Bot):
     try:
         product_id = int(message.text)
         with models.SessionLocal() as db:
             product = db.query(models.Product).filter_by(id=product_id).first()
             if not product:
-                await message.answer("Товар с таким ID не найден.")
+                await message.answer("Товар не найден.")
                 return
-            purchases = db.query(models.Purchase).filter_by(product_id=product_id).first()
-            if purchases:
-                await message.answer("Нельзя удалить товар, по которому уже были покупки.")
-                return
-            # Удаляем сессии
-            db.query(models.Session).filter_by(product_id=product_id).delete()
-            db.delete(product)
+            product.is_active = not product.is_active
             db.commit()
-            await log_action(bot, message.from_user.id, "admin_del_product", f"Удалён товар ID {product_id}")
-            await message.answer(f"Товар «{product.name}» удалён.", reply_markup=kb.admin_menu_keyboard())
+            new_status = "активен" if product.is_active else "скрыт"
+            await log_action(bot, message.from_user.id, "admin_toggle_product", f"Товар ID {product_id} теперь {new_status}")
+            await message.answer(f"Товар «{product.name}» теперь {new_status}.", reply_markup=kb.admin_menu_keyboard())
     except ValueError:
         await message.answer("Введите число.")
     await state.clear()

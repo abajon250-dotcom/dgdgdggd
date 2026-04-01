@@ -34,7 +34,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="📜 Логи", callback_data="admin_logs")],
         [InlineKeyboardButton(text="➕ Добавить товар", callback_data="admin_add_product")],
-        [InlineKeyboardButton(text="🗑 Удалить товар", callback_data="admin_del_product")],
+        [InlineKeyboardButton(text="🔄 Скрыть/показать товар", callback_data="admin_toggle_product")],
         [InlineKeyboardButton(text="📎 Добавить tdata (ZIP)", callback_data="admin_add_tdata")],
         [InlineKeyboardButton(text="📝 Добавить текст (логин:пароль)", callback_data="admin_add_text")],
         [InlineKeyboardButton(text="🔙 В главное меню", callback_data="main_menu")]
