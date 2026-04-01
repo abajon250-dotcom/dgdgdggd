@@ -26,14 +26,14 @@ class Product(Base):
     description = Column(Text, nullable=True)
     price = Column(Float, nullable=False)
     currency = Column(String, default="USDT")
-    is_active = Column(Boolean, default=True)   # новое поле
+    is_active = Column(Boolean, default=True)
     sessions = relationship("Session", back_populates="product")
 
 class Session(Base):
     __tablename__ = 'sessions'
     id = Column(Integer, primary_key=True)
     product_id = Column(Integer, ForeignKey('products.id'), nullable=False)
-    data = Column(Text, nullable=True)            # текстовые данные
+    data = Column(Text, nullable=True)
     file_data = Column(LargeBinary, nullable=True)
     filename = Column(String, nullable=True)
     is_file = Column(Boolean, default=False)
